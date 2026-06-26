@@ -1,0 +1,203 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMINISTRATOR
+  TREASURER
+  ACCOUNT_REVIEWER
+  AUDITOR
+}
+
+enum TransactionStatus {
+  DRAFT
+  REVIEWED
+  APPROVED
+}
+
+enum RuleMatchType {
+  CONTAINS
+  STARTS_WITH
+  REGEX
+}
+
+enum ClosingStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  SENT
+}
+
+enum EmailStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum ImportSourceType {
+  CSV
+  XLSX
+  PDF
+  API
+  MANUAL
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  IMPORT
+  APPROVE
+  REOPEN
+  CLOSE_MONTH
+  SEND_EMAIL
+}
+
+model User {
+  id               String           @id @default(cuid())
+  email            String           @unique
+  name             String
+  passwordHash     String
+  role             Role
+  active           Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  imports          ImportSession[]
+  auditLogs        AuditLog[]
+  approvedClosings MonthlyClosing[] @relation("ClosingApprover")
+}
+
+model Category {
+  id               String               @id @default(cuid())
+  name             String
+  parentCategoryId String?
+  parentCategory   Category?            @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id], onDelete: SetNull)
+  children         Category[]           @relation("CategoryHierarchy")
+  active           Boolean              @default(true)
+  color            String               @default("#155e75")
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  transactions     Transaction[]
+  rules            CategorizationRule[]
+
+  @@unique([name, parentCategoryId])
+}
+
+model CategorizationRule {
+  id        String        @id @default(cuid())
+  keyword   String
+  matchType RuleMatchType @default(CONTAINS)
+  categoryId String
+  category  Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  priority  Int           @default(100)
+  enabled   Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([enabled, priority])
+}
+
+model Transaction {
+  id               String             @id @default(cuid())
+  date             DateTime
+  description      String
+  reference        String?
+  debit            Decimal?           @default(0)
+  credit           Decimal?           @default(0)
+  amount           Decimal
+  categoryId       String?
+  category         Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  status           TransactionStatus  @default(DRAFT)
+  sourceFile       String?
+  notes            String?
+  duplicateHash    String             @unique
+  importSessionId  String?
+  importSession    ImportSession?     @relation(fields: [importSessionId], references: [id], onDelete: SetNull)
+  monthlyClosingId String?
+  monthlyClosing   MonthlyClosing?    @relation(fields: [monthlyClosingId], references: [id], onDelete: SetNull)
+  lockedAt         DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([date])
+  @@index([status])
+  @@index([categoryId])
+  @@index([monthlyClosingId])
+}
+
+model ImportSession {
+  id                String           @id @default(cuid())
+  filename          String
+  sourceType        ImportSourceType
+  uploadDate        DateTime         @default(now())
+  importedRecords   Int              @default(0)
+  duplicatedRecords Int              @default(0)
+  errorsJson        String?
+  createdById       String?
+  createdBy         User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  transactions      Transaction[]
+}
+
+model MonthlyClosing {
+  id             String          @id @default(cuid())
+  month          Int
+  year           Int
+  openingBalance Decimal         @default(0)
+  closingBalance Decimal         @default(0)
+  status         ClosingStatus   @default(DRAFT)
+  approvedById   String?
+  approvedBy     User?           @relation("ClosingApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt     DateTime?
+  emailSentAt    DateTime?
+  treasurerNotes String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  transactions   Transaction[]
+  report         MonthlyReport?
+  emailLogs      EmailLog[]
+
+  @@unique([month, year])
+  @@index([status])
+}
+
+model MonthlyReport {
+  id               String         @id @default(cuid())
+  monthlyClosingId String         @unique
+  monthlyClosing   MonthlyClosing @relation(fields: [monthlyClosingId], references: [id], onDelete: Cascade)
+  pdfPath          String
+  excelPath        String
+  generatedAt      DateTime       @default(now())
+}
+
+model EmailLog {
+  id               String          @id @default(cuid())
+  monthlyClosingId String?
+  monthlyClosing   MonthlyClosing? @relation(fields: [monthlyClosingId], references: [id], onDelete: SetNull)
+  recipient        String
+  cc               String?
+  subject          String
+  sentAt           DateTime?
+  status           EmailStatus
+  errorMessage     String?
+  createdAt        DateTime        @default(now())
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  entityType String
+  entityId   String
+  action     AuditAction
+  beforeJson String?
+  afterJson  String?
+  userId     String?
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt  DateTime    @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
