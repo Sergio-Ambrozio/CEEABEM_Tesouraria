@@ -1,11 +1,12 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save } from "lucide-react";
+import { CheckCircle2, Save } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { reviewTransactionAction } from "@/lib/actions/transaction-actions";
+import { reviewAndApproveTransactionAction, reviewTransactionAction } from "@/lib/actions/transaction-actions";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -31,7 +32,9 @@ export function TransactionReviewForm({
   categories: Array<{ id: string; name: string }>;
   disabled: boolean;
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [actionMode, setActionMode] = useState<"save" | "approve">("save");
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -43,15 +46,26 @@ export function TransactionReviewForm({
     }
   });
   const createRule = form.watch("createRule");
+  const categoryId = form.watch("categoryId");
+
+  function submit(mode: "save" | "approve") {
+    setActionMode(mode);
+    return form.handleSubmit((values) => {
+      startTransition(async () => {
+        if (mode === "approve") {
+          await reviewAndApproveTransactionAction(values);
+        } else {
+          await reviewTransactionAction(values);
+        }
+        router.refresh();
+      });
+    });
+  }
 
   return (
     <form
       className="grid gap-2 lg:grid-cols-[180px_1fr_150px]"
-      onSubmit={form.handleSubmit((values) => {
-        startTransition(async () => {
-          await reviewTransactionAction(values);
-        });
-      })}
+      onSubmit={submit("save")}
     >
       <input type="hidden" {...form.register("id")} />
       <div className="space-y-1">
@@ -74,10 +88,18 @@ export function TransactionReviewForm({
         </label>
         {createRule ? <Input placeholder="Rule keyword" {...form.register("ruleKeyword")} disabled={disabled || pending} /> : null}
       </div>
-      <div className="flex items-end">
+      <div className="flex items-end justify-end gap-2">
         <Button type="submit" variant="outline" disabled={disabled || pending}>
           <Save className="h-4 w-4" />
-          Save Review
+          {pending && actionMode === "save" ? "Saving" : "Save Review"}
+        </Button>
+        <Button
+          type="button"
+          disabled={disabled || pending || !categoryId}
+          onClick={submit("approve")}
+        >
+          <CheckCircle2 className="h-4 w-4" />
+          {pending && actionMode === "approve" ? "Approving" : "Approve"}
         </Button>
       </div>
     </form>

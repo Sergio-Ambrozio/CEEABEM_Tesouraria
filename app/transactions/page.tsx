@@ -1,10 +1,8 @@
-import { CheckCircle2, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 import { Role, TransactionStatus } from "@prisma/client";
 import { TransactionReviewForm } from "@/components/transaction-review-form";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { approveTransactionAction } from "@/lib/actions/transaction-actions";
 import { requireUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma/db";
 import { money } from "@/lib/utils";
@@ -86,15 +84,6 @@ export default async function TransactionsPage({
                   categories={categories.map((category) => ({ id: category.id, name: category.name }))}
                   disabled={locked}
                 />
-                <div className="mt-3 flex justify-end">
-                  <form action={approveTransactionAction}>
-                    <input type="hidden" name="id" value={transaction.id} />
-                    <Button type="submit" size="sm" disabled={locked || transaction.status === TransactionStatus.APPROVED || !transaction.categoryId}>
-                      <CheckCircle2 className="h-4 w-4" />
-                      Approve
-                    </Button>
-                  </form>
-                </div>
               </div>
             );
           })}
