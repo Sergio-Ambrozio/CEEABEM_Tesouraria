@@ -61,6 +61,15 @@ REVIEWER_EMAIL
 TREASURER_EMAIL
 ```
 
+For temporary Vercel demos without durable data, the deployment can run with:
+
+```text
+DATABASE_URL=file:/tmp/ceeabem-demo.db
+DEMO_SQLITE_ON_VERCEL=true
+```
+
+This mode recreates and seeds an ephemeral SQLite database when a serverless instance starts. It is only for previews and demos; use hosted PostgreSQL for real treasury records.
+
 ## Quality Checks
 
 Run these before merging:

@@ -6,6 +6,7 @@ import { jwtVerify, SignJWT } from "jose";
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma/db";
 import { sessionCookieName } from "@/lib/auth/constants";
+import { ensureDatabaseReady } from "@/lib/prisma/ensure-database";
 
 export type SessionUser = {
   id: string;
@@ -51,6 +52,7 @@ export async function readSession(): Promise<SessionUser | null> {
 
   try {
     const { payload } = await jwtVerify(token, getSecret());
+    await ensureDatabaseReady();
     const user = await prisma.user.findUnique({
       where: { id: String(payload.id) },
       select: { id: true, email: true, name: true, role: true, active: true }
