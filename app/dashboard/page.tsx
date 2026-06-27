@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { startOfYear } from "date-fns";
+import { addMonths, startOfMonth, startOfYear } from "date-fns";
 import { AlertCircle, ArrowRight, CheckCircle2, CircleDollarSign, FileCheck2, Inbox, TrendingDown, TrendingUp } from "lucide-react";
 import { ClosingStatus, TransactionStatus } from "@prisma/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,13 +13,42 @@ import { money, monthName } from "@/lib/utils";
 export default async function DashboardPage() {
   await requireUser();
   const today = new Date();
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-  const yearStart = startOfYear(today);
+  const [latestApprovedTransaction, lastClosing] = await Promise.all([
+    prisma.transaction.findFirst({
+      where: { status: TransactionStatus.APPROVED },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }]
+    }),
+    prisma.monthlyClosing.findFirst({ orderBy: [{ year: "desc" }, { month: "desc" }] })
+  ]);
+  const referenceDate =
+    latestApprovedTransaction?.date ??
+    (lastClosing ? new Date(lastClosing.year, lastClosing.month - 1, 1) : today);
+  const monthStart = startOfMonth(referenceDate);
+  const monthEnd = addMonths(monthStart, 1);
+  const yearStart = startOfYear(referenceDate);
+  const rollingStart = addMonths(monthStart, -11);
 
-  const [currentTransactions, ytdTransactions, uncategorized, pendingReviews, openClosings, recentTransactions, lastClosing] = await Promise.all([
-    prisma.transaction.findMany({ where: { date: { gte: monthStart, lt: monthEnd } } }),
-    prisma.transaction.findMany({ where: { date: { gte: yearStart, lt: monthEnd } }, include: { category: true } }),
+  const [currentTransactions, ytdTransactions, rollingTransactions, uncategorized, pendingReviews, openClosings, recentTransactions] = await Promise.all([
+    prisma.transaction.findMany({
+      where: {
+        status: TransactionStatus.APPROVED,
+        date: { gte: monthStart, lt: monthEnd }
+      }
+    }),
+    prisma.transaction.findMany({
+      where: {
+        status: TransactionStatus.APPROVED,
+        date: { gte: yearStart, lt: monthEnd }
+      },
+      include: { category: true }
+    }),
+    prisma.transaction.findMany({
+      where: {
+        status: TransactionStatus.APPROVED,
+        date: { gte: rollingStart, lt: monthEnd }
+      },
+      include: { category: true }
+    }),
     prisma.transaction.count({ where: { categoryId: null } }),
     prisma.transaction.count({ where: { status: { in: [TransactionStatus.DRAFT, TransactionStatus.REVIEWED] } } }),
     prisma.monthlyClosing.count({ where: { status: { in: [ClosingStatus.DRAFT, ClosingStatus.UNDER_REVIEW, ClosingStatus.APPROVED] } } }),
@@ -27,19 +56,19 @@ export default async function DashboardPage() {
       include: { category: true },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       take: 6
-    }),
-    prisma.monthlyClosing.findFirst({ orderBy: [{ year: "desc" }, { month: "desc" }] })
+    })
   ]);
 
   const monthlyRows = Array.from({ length: 12 }, (_, index) => {
-    const month = index + 1;
-    const rows = ytdTransactions.filter((transaction) => transaction.date.getMonth() + 1 === month);
+    const periodStart = addMonths(monthStart, index - 11);
+    const periodEnd = addMonths(periodStart, 1);
+    const rows = rollingTransactions.filter((transaction) => transaction.date >= periodStart && transaction.date < periodEnd);
     const income = rows.filter((transaction) => Number(transaction.amount) > 0).reduce((total, transaction) => total + Number(transaction.amount), 0);
     const expenses = Math.abs(rows.filter((transaction) => Number(transaction.amount) < 0).reduce((total, transaction) => total + Number(transaction.amount), 0));
-    const balance = ytdTransactions
-      .filter((transaction) => transaction.date.getMonth() + 1 <= month)
+    const balance = rollingTransactions
+      .filter((transaction) => transaction.date < periodEnd)
       .reduce((total, transaction) => total + Number(transaction.amount), 0);
-    return { month: monthName(month).slice(0, 3), income, expenses, balance };
+    return { month: monthName(periodStart.getMonth() + 1).slice(0, 3), income, expenses, balance };
   });
 
   const currentIncome = currentTransactions.filter((transaction) => Number(transaction.amount) > 0).reduce((total, transaction) => total + Number(transaction.amount), 0);
@@ -61,7 +90,7 @@ export default async function DashboardPage() {
               </Badge>
             </div>
             <p className="mt-1 text-sm text-slate-500">
-              {monthName(today.getMonth() + 1)} {today.getFullYear()} · Last closing{" "}
+              {monthName(referenceDate.getMonth() + 1)} {referenceDate.getFullYear()} · Last closing{" "}
               {lastClosing ? `${monthName(lastClosing.month)} ${lastClosing.year} (${lastClosing.status})` : "not started"}
             </p>
           </div>
