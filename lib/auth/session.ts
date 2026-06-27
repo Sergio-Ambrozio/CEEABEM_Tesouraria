@@ -4,9 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { jwtVerify, SignJWT } from "jose";
 import { Role } from "@prisma/client";
-import { prisma } from "@/lib/prisma/db";
 import { sessionCookieName } from "@/lib/auth/constants";
-import { ensureDatabaseReady } from "@/lib/prisma/ensure-database";
 
 export type SessionUser = {
   id: string;
@@ -14,6 +12,8 @@ export type SessionUser = {
   name: string;
   role: Role;
 };
+
+const roles = new Set(Object.values(Role));
 
 function getSecret() {
   const secret = process.env.SESSION_SECRET;
@@ -52,12 +52,7 @@ export async function readSession(): Promise<SessionUser | null> {
 
   try {
     const { payload } = await jwtVerify(token, getSecret());
-    await ensureDatabaseReady();
-    const user = await prisma.user.findUnique({
-      where: { id: String(payload.id) },
-      select: { id: true, email: true, name: true, role: true, active: true }
-    });
-    if (!user?.active) return null;
+    const user = sessionUserFromPayload(payload);
     return user;
   } catch {
     return null;
@@ -69,4 +64,17 @@ export async function requireUser(roles?: Role[]) {
   if (!user) redirect("/login");
   if (roles && !roles.includes(user.role)) redirect("/dashboard");
   return user;
+}
+
+function sessionUserFromPayload(payload: Record<string, unknown>): SessionUser | null {
+  const id = typeof payload.id === "string" ? payload.id : null;
+  const email = typeof payload.email === "string" ? payload.email : null;
+  const name = typeof payload.name === "string" ? payload.name : null;
+  const role = typeof payload.role === "string" && roles.has(payload.role as Role) ? (payload.role as Role) : null;
+
+  if (!id || !email || !name || !role) {
+    return null;
+  }
+
+  return { id, email, name, role };
 }
