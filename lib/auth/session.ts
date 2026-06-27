@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { jwtVerify, SignJWT } from "jose";
 import { Role } from "@prisma/client";
 import { sessionCookieName } from "@/lib/auth/constants";
+import { ensureDatabaseReady } from "@/lib/prisma/ensure-database";
 
 export type SessionUser = {
   id: string;
@@ -62,6 +63,7 @@ export async function readSession(): Promise<SessionUser | null> {
 export async function requireUser(roles?: Role[]) {
   const user = await readSession();
   if (!user) redirect("/login");
+  await ensureDatabaseReady();
   if (roles && !roles.includes(user.role)) redirect("/dashboard");
   return user;
 }
