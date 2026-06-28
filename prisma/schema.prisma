@@ -47,6 +47,46 @@ enum ImportSourceType {
   MANUAL
 }
 
+enum BankConnectorType {
+  MANUAL_PDF_UPLOAD
+  MANUAL_CSV_XLSX_UPLOAD
+  FUTURE_STRUCTURED_BANK_EXPORT
+  FUTURE_OPEN_BANKING_API
+}
+
+enum ImportSessionStatus {
+  CREATED
+  PARSING
+  PARSED
+  PARTIALLY_FAILED
+  FAILED
+  IMPORTED
+  DUPLICATE_DETECTED
+}
+
+enum ImportedTransactionRawStatus {
+  EXTRACTED
+  CORRECTED
+  IMPORTED
+  DUPLICATE
+  SKIPPED
+  NEEDS_ATTENTION
+}
+
+enum AttachmentStatus {
+  UPLOADED
+  PENDING_REVIEW
+  REVIEWED
+  REJECTED
+}
+
+enum ScheduledJobStatus {
+  STARTED
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -56,6 +96,10 @@ enum AuditAction {
   REOPEN
   CLOSE_MONTH
   SEND_EMAIL
+  ATTACH_FILE
+  REVIEW_ATTACHMENT
+  PARSE_IMPORT
+  SKIP_IMPORT_ROW
 }
 
 model User {
@@ -70,6 +114,39 @@ model User {
   imports          ImportSession[]
   auditLogs        AuditLog[]
   approvedClosings MonthlyClosing[] @relation("ClosingApprover")
+  uploadedAttachments TransactionAttachment[] @relation("AttachmentUploader")
+  reviewedAttachments TransactionAttachment[] @relation("AttachmentReviewer")
+  jobRuns          ScheduledJobRun[]
+}
+
+model BankConnection {
+  id            String            @id @default(cuid())
+  name          String
+  bankName      String            @default("PostFinance")
+  connectorType BankConnectorType @default(MANUAL_PDF_UPLOAD)
+  accountLabel  String?
+  ibanMasked    String?
+  currency      String            @default("CHF")
+  active        Boolean           @default(true)
+  lastSyncAt    DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  config        BankConnectorConfig?
+  importSessions ImportSession[]
+  jobRuns       ScheduledJobRun[]
+
+  @@index([active, connectorType])
+}
+
+model BankConnectorConfig {
+  id               String         @id @default(cuid())
+  bankConnectionId String         @unique
+  bankConnection   BankConnection @relation(fields: [bankConnectionId], references: [id], onDelete: Cascade)
+  configJson       String?
+  secretRef        String?
+  enabled          Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 }
 
 model Category {
@@ -105,8 +182,10 @@ model CategorizationRule {
 model Transaction {
   id               String             @id @default(cuid())
   date             DateTime
+  valueDate        DateTime?
   description      String
   reference        String?
+  balance          Decimal?
   debit            Decimal?           @default(0)
   credit           Decimal?           @default(0)
   amount           Decimal
@@ -114,12 +193,20 @@ model Transaction {
   category         Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   status           TransactionStatus  @default(DRAFT)
   sourceFile       String?
+  sourceType       ImportSourceType?
+  sourceConnector  BankConnectorType?
+  sourceRawId      String?
+  sourceRaw        ImportedTransactionRaw? @relation("TransactionSourceRaw", fields: [sourceRawId], references: [id], onDelete: SetNull)
+  originalImportedDataJson String?
+  needsAttentionReason String?
   notes            String?
   duplicateHash    String             @unique
   importSessionId  String?
   importSession    ImportSession?     @relation(fields: [importSessionId], references: [id], onDelete: SetNull)
   monthlyClosingId String?
   monthlyClosing   MonthlyClosing?    @relation(fields: [monthlyClosingId], references: [id], onDelete: SetNull)
+  attachments      TransactionAttachment[]
+  matchedRawDuplicates ImportedTransactionRaw[] @relation("RawMatchedTransaction")
   lockedAt         DateTime?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
@@ -128,19 +215,69 @@ model Transaction {
   @@index([status])
   @@index([categoryId])
   @@index([monthlyClosingId])
+  @@index([sourceRawId])
 }
 
 model ImportSession {
   id                String           @id @default(cuid())
   filename          String
   sourceType        ImportSourceType
+  connectorType     BankConnectorType?
+  status            ImportSessionStatus @default(CREATED)
+  bankConnectionId  String?
+  bankConnection    BankConnection?  @relation(fields: [bankConnectionId], references: [id], onDelete: SetNull)
+  periodStart       DateTime?
+  periodEnd         DateTime?
+  sourcePath        String?
+  sourceMimeType    String?
   uploadDate        DateTime         @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  rawRecordCount    Int              @default(0)
+  parsedRecordCount Int              @default(0)
+  lowConfidenceCount Int             @default(0)
   importedRecords   Int              @default(0)
   duplicatedRecords Int              @default(0)
   errorsJson        String?
   createdById       String?
   createdBy         User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
   transactions      Transaction[]
+  rawTransactions   ImportedTransactionRaw[]
+  attachments       TransactionAttachment[]
+
+  @@index([status])
+  @@index([connectorType])
+  @@index([bankConnectionId])
+}
+
+model ImportedTransactionRaw {
+  id                String                       @id @default(cuid())
+  importSessionId   String
+  importSession     ImportSession                @relation(fields: [importSessionId], references: [id], onDelete: Cascade)
+  rowIndex          Int
+  transactionDate   DateTime?
+  valueDate         DateTime?
+  description       String?
+  reference         String?
+  debit             Decimal?
+  credit            Decimal?
+  amount            Decimal?
+  balance           Decimal?
+  rawJson           String
+  normalizedJson    String?
+  confidence        Float                        @default(0)
+  parseWarningsJson String?
+  duplicateHash     String?
+  matchedTransactionId String?
+  matchedTransaction Transaction?                @relation("RawMatchedTransaction", fields: [matchedTransactionId], references: [id], onDelete: SetNull)
+  sourceTransactions Transaction[]               @relation("TransactionSourceRaw")
+  status            ImportedTransactionRawStatus @default(EXTRACTED)
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+
+  @@unique([importSessionId, rowIndex])
+  @@index([importSessionId, status])
+  @@index([duplicateHash])
 }
 
 model MonthlyClosing {
@@ -185,6 +322,53 @@ model EmailLog {
   status           EmailStatus
   errorMessage     String?
   createdAt        DateTime        @default(now())
+}
+
+model TransactionAttachment {
+  id              String           @id @default(cuid())
+  transactionId   String?
+  transaction     Transaction?     @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  importSessionId String?
+  importSession   ImportSession?   @relation(fields: [importSessionId], references: [id], onDelete: Cascade)
+  filename        String
+  mimeType        String
+  fileSize        Int
+  storagePath     String
+  notes           String?
+  status          AttachmentStatus @default(UPLOADED)
+  receiptRequired Boolean          @default(false)
+  uploadedById    String?
+  uploadedBy      User?            @relation("AttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  reviewedById    String?
+  reviewedBy      User?            @relation("AttachmentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([transactionId])
+  @@index([importSessionId])
+  @@index([status])
+}
+
+model ScheduledJobRun {
+  id               String             @id @default(cuid())
+  jobName          String
+  status           ScheduledJobStatus @default(STARTED)
+  bankConnectionId String?
+  bankConnection   BankConnection?    @relation(fields: [bankConnectionId], references: [id], onDelete: SetNull)
+  periodStart      DateTime?
+  periodEnd        DateTime?
+  summaryJson      String?
+  errorMessage     String?
+  createdById      String?
+  createdBy        User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  startedAt        DateTime           @default(now())
+  finishedAt       DateTime?
+  createdAt        DateTime           @default(now())
+
+  @@index([jobName, startedAt])
+  @@index([status])
 }
 
 model AuditLog {

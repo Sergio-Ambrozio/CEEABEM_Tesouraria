@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileText, Loader2, Upload } from "lucide-react";
 import { importTransactionsAction } from "@/lib/actions/import-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,10 +16,11 @@ export function ImportForm() {
     importedRecords: undefined,
     duplicatedRecords: undefined,
     errorCount: undefined,
-    errors: undefined
+    errors: undefined,
+    sessionId: undefined
   });
   const [filename, setFilename] = useState("");
-  const hasResult = state.importedRecords !== undefined || state.error;
+  const hasResult = state.importedRecords !== undefined || state.sessionId || state.error;
   const resultTone = useMemo(() => {
     if (state.error) return "danger";
     if ((state.errorCount ?? 0) > 0) return "warning";
@@ -32,13 +33,14 @@ export function ImportForm() {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
             <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-white text-cyan-700 shadow-sm ring-1 ring-slate-200">
-              <FileSpreadsheet className="h-6 w-6" />
+              <FileText className="h-6 w-6" />
             </span>
             <div>
               <Label htmlFor="file" className="text-base text-slate-950">
-                Bank export
+                Bank statement or export
               </Label>
               <div className="mt-1 flex flex-wrap gap-2">
+                <Badge tone="info">PDF</Badge>
                 <Badge tone="info">CSV</Badge>
                 <Badge tone="info">XLSX</Badge>
                 {filename ? <span className="text-sm font-medium text-slate-700">{filename}</span> : null}
@@ -49,7 +51,7 @@ export function ImportForm() {
             id="file"
             type="file"
             name="file"
-            accept=".csv,.xlsx"
+            accept=".pdf,.csv,.xlsx"
             required
             className="max-w-sm bg-white"
             onChange={(event) => setFilename(event.currentTarget.files?.[0]?.name ?? "")}
@@ -94,7 +96,11 @@ export function ImportForm() {
           {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {pending ? "Importing" : "Import file"}
         </Button>
-        {state.importedRecords ? (
+        {state.sessionId ? (
+          <Button asChild variant="outline">
+            <Link href={`/transactions/import/${state.sessionId}`}>Review extracted rows</Link>
+          </Button>
+        ) : state.importedRecords ? (
           <Button asChild variant="outline">
             <Link href="/transactions?status=REVIEWED">Review transactions</Link>
           </Button>

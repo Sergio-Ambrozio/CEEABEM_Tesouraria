@@ -1,11 +1,15 @@
-import { Lock } from "lucide-react";
+import { Download, FileUp, Lock, Trash2 } from "lucide-react";
 import { Role, TransactionStatus } from "@prisma/client";
 import { TransactionReviewForm } from "@/components/transaction-review-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { requireUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma/db";
 import { money } from "@/lib/utils";
+import { deleteTransactionAttachmentAction, reviewTransactionAttachmentAction, uploadTransactionAttachmentAction } from "@/lib/actions/transaction-actions";
 
 export default async function TransactionsPage({
   searchParams
@@ -18,7 +22,14 @@ export default async function TransactionsPage({
   const [transactions, categories] = await Promise.all([
     prisma.transaction.findMany({
       where: status && Object.values(TransactionStatus).includes(status) ? { status } : {},
-      include: { category: true, monthlyClosing: true },
+      include: {
+        category: true,
+        monthlyClosing: true,
+        attachments: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: "desc" }
+        }
+      },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       take: 150
     }),
@@ -84,6 +95,69 @@ export default async function TransactionsPage({
                   categories={categories.map((category) => ({ id: category.id, name: category.name }))}
                   disabled={locked}
                 />
+                <div className="mt-4 border-t border-slate-100 pt-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-950">Receipts and supporting documents</h3>
+                      <p className="text-xs text-slate-500">Attach invoices, receipts, donation documents, or audit support.</p>
+                    </div>
+                    <Badge tone={transaction.attachments.length > 0 ? "info" : "neutral"}>{transaction.attachments.length} files</Badge>
+                  </div>
+                  <div className="grid gap-3 xl:grid-cols-[1fr_360px]">
+                    <div className="space-y-2">
+                      {transaction.attachments.map((attachment) => (
+                        <div key={attachment.id} className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 md:flex-row md:items-center md:justify-between">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-slate-900">{attachment.filename}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                              <span>{Math.ceil(attachment.fileSize / 1024)} KB</span>
+                              <Badge tone={attachment.status === "REVIEWED" ? "success" : attachment.status === "REJECTED" ? "danger" : "warning"}>
+                                {attachment.status}
+                              </Badge>
+                              {attachment.receiptRequired ? <Badge tone="info">Required</Badge> : null}
+                              {attachment.notes ? <span>{attachment.notes}</span> : null}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button asChild size="sm" variant="outline">
+                              <a href={`/api/attachments/${attachment.id}/download`}>
+                                <Download className="h-4 w-4" />
+                                Download
+                              </a>
+                            </Button>
+                            <form action={reviewTransactionAttachmentAction}>
+                              <input type="hidden" name="id" value={attachment.id} />
+                              <input type="hidden" name="status" value="REVIEWED" />
+                              <Button size="sm" variant="outline" type="submit">Review</Button>
+                            </form>
+                            <form action={deleteTransactionAttachmentAction}>
+                              <input type="hidden" name="id" value={attachment.id} />
+                              <Button size="sm" variant="ghost" type="submit">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </form>
+                          </div>
+                        </div>
+                      ))}
+                      {transaction.attachments.length === 0 ? (
+                        <div className="rounded-md border border-dashed border-slate-300 p-3 text-sm text-slate-500">No supporting documents attached.</div>
+                      ) : null}
+                    </div>
+                    <form action={uploadTransactionAttachmentAction} className="space-y-2 rounded-md border border-dashed border-slate-300 bg-white p-3">
+                      <input type="hidden" name="transactionId" value={transaction.id} />
+                      <Input name="file" type="file" accept=".pdf,.jpg,.jpeg,.png,.heic" required />
+                      <Textarea name="notes" rows={2} placeholder="Attachment notes" />
+                      <label className="flex items-center gap-2 text-xs text-slate-600">
+                        <input type="checkbox" name="receiptRequired" />
+                        Receipt required for audit
+                      </label>
+                      <Button type="submit" size="sm" variant="outline">
+                        <FileUp className="h-4 w-4" />
+                        Attach file
+                      </Button>
+                    </form>
+                  </div>
+                </div>
               </div>
             );
           })}

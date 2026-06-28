@@ -167,6 +167,7 @@ async function bootstrapDemoSqlite() {
       await prisma.$executeRawUnsafe(statement);
     }
   }
+  await ensureRelease2DemoSchema();
 
   const passwordHash = await hashPassword("ChangeMe123!");
   for (const [email, name, role] of users) {
@@ -209,5 +210,149 @@ async function bootstrapDemoSqlite() {
         enabled: true
       }
     });
+  }
+}
+
+async function ensureRelease2DemoSchema() {
+  const transactionColumns = [
+    'ALTER TABLE "Transaction" ADD COLUMN "valueDate" DATETIME',
+    'ALTER TABLE "Transaction" ADD COLUMN "balance" DECIMAL',
+    'ALTER TABLE "Transaction" ADD COLUMN "sourceType" TEXT',
+    'ALTER TABLE "Transaction" ADD COLUMN "sourceConnector" TEXT',
+    'ALTER TABLE "Transaction" ADD COLUMN "sourceRawId" TEXT',
+    'ALTER TABLE "Transaction" ADD COLUMN "originalImportedDataJson" TEXT',
+    'ALTER TABLE "Transaction" ADD COLUMN "needsAttentionReason" TEXT'
+  ];
+  const importColumns = [
+    'ALTER TABLE "ImportSession" ADD COLUMN "connectorType" TEXT',
+    'ALTER TABLE "ImportSession" ADD COLUMN "status" TEXT NOT NULL DEFAULT \'CREATED\'',
+    'ALTER TABLE "ImportSession" ADD COLUMN "bankConnectionId" TEXT',
+    'ALTER TABLE "ImportSession" ADD COLUMN "periodStart" DATETIME',
+    'ALTER TABLE "ImportSession" ADD COLUMN "periodEnd" DATETIME',
+    'ALTER TABLE "ImportSession" ADD COLUMN "sourcePath" TEXT',
+    'ALTER TABLE "ImportSession" ADD COLUMN "sourceMimeType" TEXT',
+    'ALTER TABLE "ImportSession" ADD COLUMN "startedAt" DATETIME',
+    'ALTER TABLE "ImportSession" ADD COLUMN "completedAt" DATETIME',
+    'ALTER TABLE "ImportSession" ADD COLUMN "rawRecordCount" INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE "ImportSession" ADD COLUMN "parsedRecordCount" INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE "ImportSession" ADD COLUMN "lowConfidenceCount" INTEGER NOT NULL DEFAULT 0'
+  ];
+
+  for (const statement of [...transactionColumns, ...importColumns]) {
+    await executeIfPossible(statement);
+  }
+
+  const statements = `
+CREATE TABLE IF NOT EXISTS "BankConnection" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "name" TEXT NOT NULL,
+  "bankName" TEXT NOT NULL DEFAULT 'PostFinance',
+  "connectorType" TEXT NOT NULL DEFAULT 'MANUAL_PDF_UPLOAD',
+  "accountLabel" TEXT,
+  "ibanMasked" TEXT,
+  "currency" TEXT NOT NULL DEFAULT 'CHF',
+  "active" BOOLEAN NOT NULL DEFAULT true,
+  "lastSyncAt" DATETIME,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL
+);
+CREATE TABLE IF NOT EXISTS "BankConnectorConfig" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "bankConnectionId" TEXT NOT NULL,
+  "configJson" TEXT,
+  "secretRef" TEXT,
+  "enabled" BOOLEAN NOT NULL DEFAULT true,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL,
+  CONSTRAINT "BankConnectorConfig_bankConnectionId_fkey" FOREIGN KEY ("bankConnectionId") REFERENCES "BankConnection" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE IF NOT EXISTS "ImportedTransactionRaw" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "importSessionId" TEXT NOT NULL,
+  "rowIndex" INTEGER NOT NULL,
+  "transactionDate" DATETIME,
+  "valueDate" DATETIME,
+  "description" TEXT,
+  "reference" TEXT,
+  "debit" DECIMAL,
+  "credit" DECIMAL,
+  "amount" DECIMAL,
+  "balance" DECIMAL,
+  "rawJson" TEXT NOT NULL,
+  "normalizedJson" TEXT,
+  "confidence" REAL NOT NULL DEFAULT 0,
+  "parseWarningsJson" TEXT,
+  "duplicateHash" TEXT,
+  "matchedTransactionId" TEXT,
+  "status" TEXT NOT NULL DEFAULT 'EXTRACTED',
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL,
+  CONSTRAINT "ImportedTransactionRaw_importSessionId_fkey" FOREIGN KEY ("importSessionId") REFERENCES "ImportSession" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "ImportedTransactionRaw_matchedTransactionId_fkey" FOREIGN KEY ("matchedTransactionId") REFERENCES "Transaction" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+CREATE TABLE IF NOT EXISTS "TransactionAttachment" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "transactionId" TEXT,
+  "importSessionId" TEXT,
+  "filename" TEXT NOT NULL,
+  "mimeType" TEXT NOT NULL,
+  "fileSize" INTEGER NOT NULL,
+  "storagePath" TEXT NOT NULL,
+  "notes" TEXT,
+  "status" TEXT NOT NULL DEFAULT 'UPLOADED',
+  "receiptRequired" BOOLEAN NOT NULL DEFAULT false,
+  "uploadedById" TEXT,
+  "reviewedById" TEXT,
+  "reviewedAt" DATETIME,
+  "deletedAt" DATETIME,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL,
+  CONSTRAINT "TransactionAttachment_transactionId_fkey" FOREIGN KEY ("transactionId") REFERENCES "Transaction" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "TransactionAttachment_importSessionId_fkey" FOREIGN KEY ("importSessionId") REFERENCES "ImportSession" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "TransactionAttachment_uploadedById_fkey" FOREIGN KEY ("uploadedById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT "TransactionAttachment_reviewedById_fkey" FOREIGN KEY ("reviewedById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+CREATE TABLE IF NOT EXISTS "ScheduledJobRun" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "jobName" TEXT NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'STARTED',
+  "bankConnectionId" TEXT,
+  "periodStart" DATETIME,
+  "periodEnd" DATETIME,
+  "summaryJson" TEXT,
+  "errorMessage" TEXT,
+  "createdById" TEXT,
+  "startedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "finishedAt" DATETIME,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "ScheduledJobRun_bankConnectionId_fkey" FOREIGN KEY ("bankConnectionId") REFERENCES "BankConnection" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT "ScheduledJobRun_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "BankConnectorConfig_bankConnectionId_key" ON "BankConnectorConfig"("bankConnectionId");
+CREATE INDEX IF NOT EXISTS "BankConnection_active_connectorType_idx" ON "BankConnection"("active", "connectorType");
+CREATE UNIQUE INDEX IF NOT EXISTS "ImportedTransactionRaw_importSessionId_rowIndex_key" ON "ImportedTransactionRaw"("importSessionId", "rowIndex");
+CREATE INDEX IF NOT EXISTS "ImportedTransactionRaw_importSessionId_status_idx" ON "ImportedTransactionRaw"("importSessionId", "status");
+CREATE INDEX IF NOT EXISTS "ImportedTransactionRaw_duplicateHash_idx" ON "ImportedTransactionRaw"("duplicateHash");
+CREATE INDEX IF NOT EXISTS "TransactionAttachment_transactionId_idx" ON "TransactionAttachment"("transactionId");
+CREATE INDEX IF NOT EXISTS "TransactionAttachment_importSessionId_idx" ON "TransactionAttachment"("importSessionId");
+CREATE INDEX IF NOT EXISTS "TransactionAttachment_status_idx" ON "TransactionAttachment"("status");
+CREATE INDEX IF NOT EXISTS "ScheduledJobRun_jobName_startedAt_idx" ON "ScheduledJobRun"("jobName", "startedAt");
+CREATE INDEX IF NOT EXISTS "ScheduledJobRun_status_idx" ON "ScheduledJobRun"("status");
+CREATE INDEX IF NOT EXISTS "ImportSession_status_idx" ON "ImportSession"("status");
+CREATE INDEX IF NOT EXISTS "ImportSession_connectorType_idx" ON "ImportSession"("connectorType");
+CREATE INDEX IF NOT EXISTS "ImportSession_bankConnectionId_idx" ON "ImportSession"("bankConnectionId");
+CREATE INDEX IF NOT EXISTS "Transaction_sourceRawId_idx" ON "Transaction"("sourceRawId");
+`;
+
+  for (const statement of statements.split(";").map((item) => item.trim()).filter(Boolean)) {
+    await prisma.$executeRawUnsafe(statement);
+  }
+}
+
+async function executeIfPossible(statement: string) {
+  try {
+    await prisma.$executeRawUnsafe(statement);
+  } catch {
+    // SQLite reports duplicate-column errors when an older demo DB is already up to date.
   }
 }

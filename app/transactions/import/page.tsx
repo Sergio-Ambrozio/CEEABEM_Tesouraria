@@ -1,4 +1,5 @@
 import { Role } from "@prisma/client";
+import Link from "next/link";
 import { ImportForm } from "@/components/import-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +17,7 @@ export default async function ImportPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-950">Transaction Import</h1>
-            <p className="mt-1 text-sm text-slate-500">CSV and Excel bank exports enter the review queue after duplicate checks and rule matching.</p>
+            <p className="mt-1 text-sm text-slate-500">Upload PostFinance PDF statements for review, or import CSV and Excel bank exports directly.</p>
           </div>
           {latest ? (
             <div className="grid gap-2 text-sm sm:grid-cols-3">
@@ -47,8 +48,10 @@ export default async function ImportPage() {
                 <th className="py-2">File</th>
                 <th>Uploaded</th>
                 <th>Imported</th>
+                <th>Status</th>
                 <th>Duplicates</th>
                 <th>Errors</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -57,7 +60,10 @@ export default async function ImportPage() {
                   <td className="py-3 font-medium text-slate-900">{session.filename}</td>
                   <td className="text-slate-500">{session.uploadDate.toLocaleString()}</td>
                   <td>
-                    <Badge tone="success">{session.importedRecords}</Badge>
+                    <Badge tone="success">{session.importedRecords || session.parsedRecordCount}</Badge>
+                  </td>
+                  <td>
+                    <Badge tone={session.status === "FAILED" ? "danger" : session.status === "IMPORTED" ? "success" : "info"}>{session.status}</Badge>
                   </td>
                   <td>
                     <Badge tone={session.duplicatedRecords > 0 ? "warning" : "neutral"}>{session.duplicatedRecords}</Badge>
@@ -65,11 +71,18 @@ export default async function ImportPage() {
                   <td>
                     <Badge tone={session.errorsJson ? "danger" : "neutral"}>{session.errorsJson ? JSON.parse(session.errorsJson).length : 0}</Badge>
                   </td>
+                  <td className="text-right">
+                    {session.sourceType === "PDF" ? (
+                      <Link href={`/transactions/import/${session.id}`} className="text-sm font-medium text-cyan-700 hover:text-cyan-900">
+                        Review
+                      </Link>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
               {sessions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-sm text-slate-500">
+                  <td colSpan={7} className="py-8 text-center text-sm text-slate-500">
                     No import sessions yet.
                   </td>
                 </tr>
