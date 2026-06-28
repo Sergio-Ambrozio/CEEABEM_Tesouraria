@@ -6,6 +6,9 @@ import { prisma } from "@/lib/prisma/db";
 import { ensureDatabaseReady } from "@/lib/prisma/ensure-database";
 
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === "production" && !process.env.CRON_SECRET) {
+    return new NextResponse("CRON_SECRET is not configured.", { status: 503 });
+  }
   if (process.env.CRON_SECRET && request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
