@@ -6,6 +6,7 @@ import { jwtVerify, SignJWT } from "jose";
 import { Role } from "@prisma/client";
 import { sessionCookieName } from "@/lib/auth/constants";
 import { ensureDatabaseReady } from "@/lib/prisma/ensure-database";
+import { prisma } from "@/lib/prisma/db";
 
 export type SessionUser = {
   id: string;
@@ -61,9 +62,14 @@ export async function readSession(): Promise<SessionUser | null> {
 }
 
 export async function requireUser(roles?: Role[]) {
-  const user = await readSession();
-  if (!user) redirect("/login");
+  const sessionUser = await readSession();
+  if (!sessionUser) redirect("/login");
   await ensureDatabaseReady();
+  const user = await prisma.user.findUnique({
+    where: { email: sessionUser.email },
+    select: { id: true, email: true, name: true, role: true, active: true }
+  });
+  if (!user?.active) redirect("/login");
   if (roles && !roles.includes(user.role)) redirect("/dashboard");
   return user;
 }
